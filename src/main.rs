@@ -1,14 +1,5 @@
-enum DeliveryStatus {
-    Pending,
-    Succeeded,
-    Failed,
-}
-
-struct Delivery {
-    event: String,
-    attempts: i32,
-    status: DeliveryStatus,
-}
+mod delivery;
+use delivery::{Delivery, DeliveryStatus, find_delivery, mark_failed, mark_succeeded};
 
 fn main() {
     let mut successful_delivery = Delivery {
@@ -52,98 +43,22 @@ fn main() {
     };
 
     print_attempt(&failed_delivery);
-}
 
-fn mark_succeeded(delivery: &mut Delivery) -> Result<(), &'static str> {
-    match delivery.status {
-        DeliveryStatus::Pending => {
-            delivery.status = DeliveryStatus::Succeeded;
-            Ok(())
-        }
-        _ => Err("cannot change delivery status from terminal state"),
-    }
-}
+    let deliveries = vec![successful_delivery, failed_delivery];
 
-fn mark_failed(delivery: &mut Delivery) -> Result<(), &'static str> {
-    match delivery.status {
-        DeliveryStatus::Pending => {
-            delivery.status = DeliveryStatus::Failed;
-            Ok(())
-        }
-        _ => Err("cannot change delivery status from terminal state"),
+    println!("Looking for deliveries...");
+
+    for event_name in ["order.canceled", "order.refunded"] {
+        match find_delivery(&deliveries, event_name) {
+            Some(delivery) => print_attempt(delivery),
+            None => println!("cannot find event {event_name}"),
+        };
     }
 }
 
 fn print_attempt(delivery: &Delivery) {
-    let status = match delivery.status {
-        DeliveryStatus::Pending => "pending",
-        DeliveryStatus::Succeeded => "succeeded",
-        DeliveryStatus::Failed => "failed",
-    };
-
     println!(
-        "Delivery {}, attempt {} ({status})",
-        delivery.event, delivery.attempts
+        "Delivery {}, attempt {} ({})",
+        delivery.event, delivery.attempts, delivery.status
     );
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn pending_delivery_can_succeed() {
-        let mut delivery = Delivery {
-            event: String::from("order.created"),
-            attempts: 1,
-            status: DeliveryStatus::Pending,
-        };
-
-        let result = mark_succeeded(&mut delivery);
-
-        assert!(result.is_ok());
-        assert!(matches!(delivery.status, DeliveryStatus::Succeeded));
-    }
-
-    #[test]
-    fn failed_delivery_cannot_succeed() {
-        let mut delivery = Delivery {
-            event: String::from("order.created"),
-            attempts: 1,
-            status: DeliveryStatus::Failed,
-        };
-
-        let result = mark_succeeded(&mut delivery);
-
-        assert!(result.is_err());
-        assert!(matches!(delivery.status, DeliveryStatus::Failed));
-    }
-
-    #[test]
-    fn pending_delivery_can_fail() {
-        let mut delivery = Delivery {
-            event: String::from("order.created"),
-            attempts: 1,
-            status: DeliveryStatus::Pending,
-        };
-
-        let result = mark_failed(&mut delivery);
-
-        assert!(result.is_ok());
-        assert!(matches!(delivery.status, DeliveryStatus::Failed));
-    }
-
-    #[test]
-    fn succeeded_delivery_cannot_fail() {
-        let mut delivery = Delivery {
-            event: String::from("order.created"),
-            attempts: 1,
-            status: DeliveryStatus::Succeeded,
-        };
-
-        let result = mark_failed(&mut delivery);
-
-        assert!(result.is_err());
-        assert!(matches!(delivery.status, DeliveryStatus::Succeeded));
-    }
 }
