@@ -1,5 +1,9 @@
 use std::fmt::Display;
 
+use serde::Serialize;
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub(super) enum DeliveryStatus {
     Pending,
     Succeeded,
@@ -18,7 +22,9 @@ impl Display for DeliveryStatus {
     }
 }
 
+#[derive(Clone, Serialize)]
 pub(super) struct Delivery {
+    pub(super) id: u64,
     pub(super) event: String,
     pub(super) attempts: i32,
     pub(super) status: DeliveryStatus,
@@ -30,7 +36,7 @@ pub(super) fn find_delivery<'a>(
 ) -> Option<&'a Delivery> {
     deliveries
         .iter()
-        .find(|&delivery| delivery.event == event_name)
+        .find(|delivery| delivery.event == event_name)
 }
 
 pub(super) fn mark_succeeded(delivery: &mut Delivery) -> Result<(), &'static str> {
@@ -60,6 +66,7 @@ mod tests {
     #[test]
     fn pending_delivery_can_succeed() {
         let mut delivery = Delivery {
+            id: 1,
             event: String::from("order.created"),
             attempts: 1,
             status: DeliveryStatus::Pending,
@@ -74,6 +81,7 @@ mod tests {
     #[test]
     fn failed_delivery_cannot_succeed() {
         let mut delivery = Delivery {
+            id: 1,
             event: String::from("order.created"),
             attempts: 1,
             status: DeliveryStatus::Failed,
@@ -88,6 +96,7 @@ mod tests {
     #[test]
     fn pending_delivery_can_fail() {
         let mut delivery = Delivery {
+            id: 1,
             event: String::from("order.created"),
             attempts: 1,
             status: DeliveryStatus::Pending,
@@ -102,6 +111,7 @@ mod tests {
     #[test]
     fn succeeded_delivery_cannot_fail() {
         let mut delivery = Delivery {
+            id: 1,
             event: String::from("order.created"),
             attempts: 1,
             status: DeliveryStatus::Succeeded,
