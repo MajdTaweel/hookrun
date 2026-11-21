@@ -1,13 +1,13 @@
-use crate::DeliveryStore;
-use crate::api_error::ErrorResponse;
-use crate::delivery::{Delivery, DeliveryStatus};
+use crate::AppState;
+use crate::api_error::{ErrorResponse, database_error_response};
+use axum::http::HeaderMap;
 use axum::{
     Json,
     extract::{Path, State},
     http::StatusCode,
 };
+use hookrun::{db, delivery::Delivery};
 use serde::Deserialize;
-use std::sync::{Arc, Mutex};
 
 #[derive(Deserialize)]
 pub(super) struct CreateDeliveryRequest {
@@ -15,68 +15,56 @@ pub(super) struct CreateDeliveryRequest {
 }
 
 pub(super) async fn list_deliveries(
-    State(delivery_store): State<Arc<Mutex<DeliveryStore>>>,
-) -> Json<Vec<Delivery>> {
-    let snapshot = {
-        let guard = delivery_store.lock().expect("delivery lock poisoned");
-        guard.deliveries.to_vec()
-    };
-
-    Json(snapshot)
+    State(state): State<AppState>,
+) -> Result<Json<Vec<Delivery>>, (StatusCode, Json<ErrorResponse>)> {
+    db::list_deliveries(&state.pool)
+        .await
+        .map(Json)
+        .map_err(database_error_response)
 }
 
 pub(super) async fn create_delivery(
-    State(delivery_store): State<Arc<Mutex<DeliveryStore>>>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
     Json(request): Json<CreateDeliveryRequest>,
 ) -> Result<(StatusCode, Json<Delivery>), (StatusCode, Json<ErrorResponse>)> {
-    if request.event.trim().is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "event must not be blank",
-            }),
-        ));
+    match headers.get("idempotency-key") {
+        Some(header_value) => {
+            let key = header_value.to_str().map_err(|_| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse {
+                        error: "invalid Idempotency-Key header",
+                    }),
+                )
+            })?;
+
+            db::create_delivery_with_key(&state.pool, &request.event, key)
+                .await
+                .map(|delivery| (StatusCode::CREATED, Json(delivery)))
+                .map_err(database_error_response)
+        }
+        None => db::create_delivery(&state.pool, &request.event)
+            .await
+            .map(|delivery| (StatusCode::CREATED, Json(delivery)))
+            .map_err(database_error_response),
     }
-
-    let new_delivery = {
-        let mut guard = delivery_store.lock().expect("delivery lock poisoned");
-
-        let new_delivery = Delivery {
-            id: guard.next_id,
-            event: request.event,
-            attempts: 0,
-            status: DeliveryStatus::Pending,
-        };
-
-        guard.next_id += 1;
-        guard.deliveries.push(new_delivery.clone());
-
-        new_delivery
-    };
-
-    Ok((StatusCode::CREATED, Json(new_delivery)))
 }
 
 pub(super) async fn get_delivery(
-    State(delivery_store): State<Arc<Mutex<DeliveryStore>>>,
+    State(state): State<AppState>,
     Path(id): Path<u64>,
 ) -> Result<Json<Delivery>, (StatusCode, Json<ErrorResponse>)> {
-    let delivery = {
-        let guard = delivery_store.lock().expect("delivery lock poisoned");
-        guard
-            .deliveries
-            .iter()
-            .find(|delivery| delivery.id == id)
-            .cloned()
-    };
-
-    delivery.map_or(
-        Err((
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: "delivery not found",
-            }),
-        )),
-        |delivery| Ok(Json(delivery)),
-    )
+    db::get_delivery(&state.pool, id)
+        .await
+        .map_err(database_error_response)?
+        .map_or(
+            Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "delivery not found",
+                }),
+            )),
+            |delivery| Ok(Json(delivery)),
+        )
 }
